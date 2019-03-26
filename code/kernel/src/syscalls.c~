@@ -1,0 +1,134 @@
+/**
+ * @file   syscalls.c
+ *
+ * @brief  Implementation of syscalls needed for newlib and 349 custom syscalls
+ *
+ * @date   16 Oct 2017
+ * @author Sihao Yu <sihaoy@andrew.cmu.edu>
+ */
+
+#include <kstdint.h>
+#include <printk.h>
+#include <uart.h>
+#include <arm.h>
+#include <servo.h>
+
+/** @brief Global variable to keep track of where our heap ends */
+char *heap_end = 0;
+
+void syscall_exit(int status) {
+  //print out exit status
+  printk("User program exited with status : %d", status);
+  //diable IRQ
+  disable_interrupts();
+  //hang
+  while(1){
+    ;
+  }
+  return;
+}
+
+
+int syscall_write(int file, char *ptr, int len) {
+  //stdin = 0
+  //stdout = 1
+  if (file != 1) return -1;
+  int ct = 0;
+  while (ct < len){
+    uart_put_byte(ptr[ct++]);
+  }
+  return ct;
+}
+
+
+/**
+ * Reads until all len bytes are read or newline/return is found.
+ * Detects backspace and EOL characters and handles them appropriately.
+ *
+ * The idea is to mimic normal terminal reading input, that is,
+ * if the user hits backspace it should erase the previously read character.
+ */
+int syscall_read(int file, char *ptr, int len) {
+  //stdin = 0
+  //stdout = 1
+  if (file != 0) return -1;
+  int ct = 0;
+  while(ct < len){
+    uint8_t chr = uart_get_byte();
+    switch (chr) {
+      case 4: //EOL
+        return ct;
+        break; //backspace
+      case 8:
+      case 127:
+        if(ct > 0) {
+          ct --;
+          uart_put_byte('\b');
+          uart_put_byte(' ');
+          uart_put_byte('\b');
+        }
+        break;
+      case 13:
+        chr = uart_get_byte(); //dump the /r
+      case 10:
+        //new line
+        ptr[ct++] = 10;
+        printk("\n");
+        return ct;
+        break;
+      default:
+        ptr[ct++] = chr;
+        uart_put_byte(chr);
+    }
+  }
+  return ct;
+}
+
+int syscall_servo_enable(uint8_t channel, uint8_t enabled) {
+  return servo_enable(channel, enabled);
+}
+
+int syscall_servo_set(uint8_t channel, uint8_t angle) {
+  return servo_set(channel, angle);
+}
+
+/*****************************************************************************/
+/* TA system call implementations:                                           */
+/*****************************************************************************/
+
+void *syscall_sbrk(int incr) {
+  extern char __heap_low; // Defined by the linker
+  extern char __heap_top; // Defined by the linker
+  char *prev_heap_end;
+
+  if (heap_end == 0) {
+    // Initialize heap_end if this is the first time sbrk was called
+    heap_end = &__heap_low;
+  }
+
+  prev_heap_end = heap_end;
+  if (heap_end + incr > &__heap_top) {
+    // Heap and stack collision, return error
+    return (void *) -1;
+  }
+
+  // update heap_end and return old heap_end
+  heap_end += incr;
+  return (void *) prev_heap_end;
+}
+
+int syscall_close(int file) {
+  return -1;
+}
+
+int syscall_fstat(int file, void *st) {
+  return 0;
+}
+
+int syscall_isatty(int file) {
+  return 1;
+}
+
+int syscall_lseek(int file, int ptr, int dir) {
+  return 0;
+}
